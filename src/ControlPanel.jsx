@@ -13,6 +13,7 @@ const ControlPanel = ({
   addBox,
   clearBoxes,
   exportLoadPlan,
+  onImportLoadPlanFile,   // US4 Rhea (Sprint 7): Import Confirmation Preview
   isBoxDragging,
   orientEntry = null,
   onRotateBox,
@@ -306,6 +307,14 @@ const ControlPanel = ({
         <button type="button" className="btn" onClick={exportLoadPlan} disabled={!hasBoxes}>
           <Icon name="download" /> Export
         </button>
+        {/* US4 Rhea (Sprint 7): Import Load Plan — opens the preview/confirm modal,
+            never applies directly on file select */}
+        {onImportLoadPlanFile && (
+          <label className="btn" style={{ cursor: 'pointer' }}>
+            <input type="file" accept=".json,application/json" onChange={onImportLoadPlanFile} style={{ display: 'none' }} />
+            <Icon name="upload" /> Import
+          </label>
+        )}
         <button type="button" className="btn btn-danger-text" onClick={clearBoxes} disabled={!hasBoxes}>
           <Icon name="trash" /> Clear all
         </button>
