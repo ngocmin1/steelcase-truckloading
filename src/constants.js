@@ -71,3 +71,17 @@ export const STRESS_TEST_TARGET = 55; // US6
 
 // Default 3D camera: from the rear quarter, far enough back to frame the whole trailer
 export const DEFAULT_CAMERA_POSITION = { x: -12, y: 26, z: 44 };
+/**
+ * US4 (Rhea): wall thickness used by DragController's boundary clamping.
+ *
+ * The front/back/side walls in TruckScene are 0.2 ft thick BoxGeometry (and
+ * matching 0.1 ft half-thickness static physics bodies), centred on the
+ * truck's outer length/width. Clamping a dragged box only to
+ * TRUCK_DIMENSIONS.length/2 (the wall's centreline) let its edge sit up to
+ * 0.1 ft INSIDE the wall — i.e. clipping through the wall geometry at the
+ * extreme front/back (and left/right) of the trailer. DEFAULT_WALL_INSET_MARGIN
+ * is the distance clampToTruck() pulls the usable envelope in by, so a
+ * clamped box's outer face stops flush against the wall's inner face instead.
+ */
+export const WALL_THICKNESS = 0.2;
+export const DEFAULT_WALL_INSET_MARGIN = WALL_THICKNESS / 2; // 0.1 ft

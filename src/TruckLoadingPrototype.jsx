@@ -67,6 +67,12 @@ const TruckLoadingPrototype = () => {
   const fitSuggestionRef   = useRef(null);   // US1/US2 Yash: AI Best Fit engine
   const suggestionTargetRef = useRef(null);  // the carton the ghost is describing
   const initialLoadSnapshotRef = useRef(null);
+  // US4 Rhea: stable ref to the latest checkFragileStacking so the scene-init
+  // effect (which only re-runs when checkStabilityAfterMove changes) can call
+  // an up-to-date version from its afterPositionChanged callback without
+  // needing to tear down and rebuild the THREE scene every time
+  // availableBoxes changes.
+  const checkFragileStackingRef = useRef(null);
   // US6 Yash: geometry/material caches
   const geometryCacheRef   = useRef(new Map());
   const edgeCacheRef       = useRef(new Map());
@@ -291,7 +297,14 @@ const TruckLoadingPrototype = () => {
       onGroupChanged: (ids) => setSelectedGroupIds([...ids]),
       afterPositionChanged: (mesh) => {
         const entry = cargoRegistryRef.current.find(e => e.mesh === mesh);
-        if (entry) checkStabilityAfterMove(entry);
+        if (!entry) return;
+        checkStabilityAfterMove(entry);
+        // US4 Rhea (Task 3): the fragile-stacking warning previously only
+        // fired on spawn and on AI "Snap to Suggestion" — a box manually
+        // dragged into a stacking position never re-checked. TruckScene now
+        // forwards afterPositionChanged from DragController's onPositionChanged,
+        // so this fires for manual drag placements too.
+        checkFragileStackingRef.current?.(entry);
       },
     });
     sceneRef.current           = scene;
@@ -520,6 +533,16 @@ const TruckLoadingPrototype = () => {
       }
     }
   }, [availableBoxes]);
+
+  // US4 Rhea (Task 3): keep a stable ref to the latest checkFragileStacking so
+  // the scene-init effect's afterPositionChanged callback (created once, and
+  // only recreated when checkStabilityAfterMove changes) always calls the
+  // current version — without needing to add checkFragileStacking to that
+  // effect's dependency array, which would tear down and rebuild the entire
+  // THREE/cannon scene every time availableBoxes changes.
+  useEffect(() => {
+    checkFragileStackingRef.current = checkFragileStacking;
+  }, [checkFragileStacking]);
 
   // ── US6 Yash + US5 Rhea: core box spawner ─────────────────────────────────
   const addBoxFromType = useCallback((boxType) => {
@@ -1000,6 +1023,8 @@ const TruckLoadingPrototype = () => {
     setSuggestion(null);
     setSuggestionCandidates([]);
     suggestionTargetRef.current = null;
+    // US4 Rhea (Task 3): fragile-stacking warning must fire for AI-assisted
+    // snap placement too, not just manual drag / initial spawn.
     setTimeout(() => checkFragileStacking(lastEntry), 100);
   }, [suggestion, boxes.length, checkFragileStacking, checkStabilityOnPlace, applyPlacement]);
 
