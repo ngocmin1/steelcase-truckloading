@@ -927,6 +927,10 @@ const TruckLoadingPrototype = () => {
         mass: entry.physics?.mass ?? estimateMass(entry.size),
         fragile: entry.fragile ?? false,
         restrictions: entry.restrictions ?? {},   // US7
+        // Autofill specifically should climb onto the load instead of
+        // completing one flat layer before ever starting the next — a single
+        // "Add box" / Suggest Best Fit stays snug-first (preferStacked off).
+        preferStacked: true,
         exclude: [entry]
       }
     );

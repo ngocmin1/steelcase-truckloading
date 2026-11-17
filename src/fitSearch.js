@@ -21,6 +21,7 @@
 
 import {
   DEFAULT_TRUCK,
+  FLOOR_Y,
   makeAABB,
   intersects,
   loadStats,
@@ -44,6 +45,25 @@ export const TIME_BUDGET_MS = 200;
  * is a worse answer than a slightly slow one.
  */
 export const HARD_CEILING_MS = 3 * TIME_BUDGET_MS;
+
+/**
+ * How much worse a stacked spot is allowed to score than the best floor spot
+ * before Autofill gives up on climbing and takes the floor spot instead.
+ *
+ * The scorer rewards flush faces and contact area, and the FIRST box on a new
+ * layer only ever touches the one carton below it — it has no side neighbours
+ * up there yet — while a floor box can touch the deck, a wall, AND a
+ * neighbour at once. That is a real, valid preference for a single
+ * suggestion (snug beats exposed), but it means a purely score-driven bulk
+ * fill keeps completing the current layer before ever starting the next one,
+ * so the trailer fills out wall-to-wall long before it uses any height. This
+ * slack lets `preferStacked` searches (Autofill) choose a modestly
+ * lower-scoring stacked spot anyway — the comHeight/tipping/crush/fragile
+ * penalties already baked into that candidate's score are what still veto an
+ * actually unsafe stack; this only overrides the "fewer faces touched"
+ * exposure penalty a lone box on a new layer cannot avoid.
+ */
+export const STACKED_PREFERENCE_SLACK = 30;
 
 export const COARSE_STEP = 1.0;    // feet — open deck, nothing nearby
 export const FINE_STEP   = 0.125;  // feet — within NEAR_BAND of cargo
@@ -371,7 +391,10 @@ export function findBestFits(dimensions, obstacles = [], options = {}) {
     // US7: a carton flagged This-Side-Up may only be set down in whichever
     // orientation keeps its own height axis vertical — it must never be the
     // one the search lays on its side just because that pose scored tighter.
-    thisSideUp = false
+    thisSideUp = false,
+    // Autofill: climb onto an existing carton instead of only ever extending
+    // the current floor layer — see STACKED_PREFERENCE_SLACK above.
+    preferStacked = false
   } = options;
 
   const empty = {
@@ -474,7 +497,19 @@ export function findBestFits(dimensions, obstacles = [], options = {}) {
     }
   }
 
-  scored.sort((a, b) => (a.score - b.score) || (a.position.x - b.position.x) ||
+  // Rank by score as usual, except `preferStacked` subtracts a slack amount
+  // from any candidate that is not resting on the bare deck — enough to let a
+  // modestly-worse stacked spot outrank a tighter floor one, but never enough
+  // to beat out the comHeight/tipping/crush/fragile penalties a candidate
+  // already carries in its own `score` when the stack is genuinely unsafe.
+  // `position.y` is the box's CENTRE, not its bottom face — a box resting on
+  // the bare deck still centres at FLOOR_Y + height/2, so "stacked" has to be
+  // judged from where its bottom face actually sits.
+  const isStacked = (c) => c.position.y - c.size.y / 2 > FLOOR_Y + 1e-3;
+  const rank = (c) => c.score -
+    (preferStacked && isStacked(c) ? STACKED_PREFERENCE_SLACK : 0);
+
+  scored.sort((a, b) => (rank(a) - rank(b)) || (a.position.x - b.position.x) ||
                         (a.position.z - b.position.z) || (a.position.y - b.position.y));
 
   // Return spatially distinct options — three near-identical spots are not

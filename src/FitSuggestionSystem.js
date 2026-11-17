@@ -75,6 +75,10 @@ export class FitSuggestionSystem {
       // US7: honour This-Side-Up so the search never lays the carton on its
       // side just because that pose scored tighter.
       thisSideUp: options.restrictions?.thisSideUp ?? false,
+      // Autofill: climb onto the load instead of only ever extending the
+      // current floor layer. Off by default for the single-box Suggest
+      // Best Fit / Snap flow, which should stay snug-first.
+      preferStacked: options.preferStacked ?? false,
       maxResults: count,
       timeBudgetMs: options.timeBudgetMs ?? TIME_BUDGET_MS
     });

@@ -26,7 +26,8 @@ import {
   COARSE_STEP,
   FINE_STEP,
   NEAR_BAND,
-  SNAP
+  SNAP,
+  STACKED_PREFERENCE_SLACK
 } from './fitSearch.js';
 
 // The five Steelcase SKUs from constants.js, in feet.
@@ -455,4 +456,40 @@ test('without thisSideUp the same carton can still be suggested on its side', ()
   const res = findBestFits(dims, [], { mass: 20, maxResults: 10 });
   const orientations = new Set(res.results.map(r => r.orientation));
   assert.ok(orientations.size > 1 || [...orientations][0] !== 'height-up', 'other orientations remain reachable');
+});
+
+// ── Autofill: preferStacked must actually climb, not just stay a tiebreak ──
+
+test('preferStacked climbs onto an existing carton instead of only extending the floor row', () => {
+  // A floor row flush against the sidewall, with plenty of open deck still
+  // free beside it — exactly the shape of the real bug report (a flat row,
+  // wall to wall, with open floor right next to it that a plain search
+  // always preferred over climbing).
+  const size = { x: 1, y: 1, z: 1 };
+  const wallZ = DEFAULT_TRUCK.width / 2 - size.z / 2;
+  const row = [];
+  for (let x = 0; x < 10; x += 1) row.push(onFloor(x, wallZ, size));
+
+  const plain = findBestFits(size, row, { mass: 20, maxResults: 1 });
+  const stacked = findBestFits(size, row, { mass: 20, maxResults: 1, preferStacked: true });
+
+  // A box of height 1 resting on the bare deck centres at FLOOR_Y + 0.5, not
+  // FLOOR_Y itself (that's the bottom face, not the centre).
+  const restingOnDeck = FLOOR_Y + size.y / 2;
+  assert.ok(Math.abs(plain.results[0].position.y - restingOnDeck) < 1e-3, 'sanity: the plain search really does pick the floor here');
+  assert.ok(stacked.results[0].position.y > restingOnDeck + 1e-3, 'preferStacked should climb onto the row instead');
+});
+
+test('preferStacked still refuses an unsafe stack — a heavy carton never lands on a fragile one', () => {
+  const size = { x: 1, y: 1, z: 1 };
+  const fragilePanel = onFloor(0, 0, size, { fragile: true, mass: 10 });
+  const res = findBestFits(size, [fragilePanel], { mass: HEAVY_MASS + 20, maxResults: 1, preferStacked: true });
+  // Either it finds nothing stacked-unsafe and falls back to open floor
+  // elsewhere, or if it does return a result it must not be resting on the
+  // fragile panel.
+  if (res.results.length) {
+    const r = res.results[0];
+    const onPanel = Math.abs(r.position.x) < 0.6 && Math.abs(r.position.z) < 0.6 && r.position.y > FLOOR_Y + 0.6;
+    assert.equal(onPanel, false, 'a heavy carton must not be steered onto the fragile panel just to satisfy preferStacked');
+  }
 });
