@@ -407,19 +407,34 @@ export function scorePlacement(box, ctx) {
   const unsupported = WEIGHTS.support * (1 - support.ratio);
   const floorBonus = support.onFloor ? -WEIGHTS.floorBonus : 0;
 
-  // Growth of the whole load's bounding box beyond the carton's own volume.
-  // A perfect infill adds nothing; a box dropped in open floor adds a lot.
+  // Growth of the load's FOOTPRINT (length × width) beyond the carton's own
+  // footprint. A perfect infill — including stacking straight on top of what
+  // is already loaded — adds nothing; spreading sideways into open deck adds
+  // a lot.
+  //
+  // This used to measure growth of the full 3-D bounding box (length × height
+  // × width). That conflated two very different things: claiming NEW floor
+  // space (bad — it is exactly the "scattered across open deck" pattern this
+  // term exists to punish) and building UP on floor space that is already
+  // claimed (good — it is literally what "use the trailer's height" means).
+  // Because height growth got multiplied by the ENTIRE existing footprint
+  // area, the first box on a new layer could cost 50-100x what the same box
+  // cost extending sideways once the base covered any real amount of deck —
+  // so the search always found the sideways spot "tighter" and the trailer
+  // filled out a single layer long before it ever used its height. Measuring
+  // only the plan footprint removes that bias: stacking within the existing
+  // footprint is now free, exactly like floor infill, and growth is still
+  // charged for claiming floor area the load did not already occupy.
   let envelope = 0;
   let span = 0;
   if (stats.envelope) {
     const e = stats.envelope;
-    const oldV = (e.maxX - e.minX) * (e.maxY - e.minY) * (e.maxZ - e.minZ);
-    const newV =
+    const oldFootprint = (e.maxX - e.minX) * (e.maxZ - e.minZ);
+    const newFootprint =
       (Math.max(e.maxX, box.max.x) - Math.min(e.minX, box.min.x)) *
-      (Math.max(e.maxY, box.max.y) - Math.min(e.minY, box.min.y)) *
       (Math.max(e.maxZ, box.max.z) - Math.min(e.minZ, box.min.z));
     envelope = WEIGHTS.envelope *
-      (Math.max(0, newV - oldV - boxVolume) / Math.max(boxVolume, 1e-6));
+      (Math.max(0, newFootprint - oldFootprint - footprint) / Math.max(footprint, 1e-6));
 
     // A trailer is long and narrow: fill across the width (and upward) before
     // extending the load toward the door. Without this the scorer happily laid

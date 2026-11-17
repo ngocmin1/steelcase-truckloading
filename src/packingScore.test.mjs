@@ -583,3 +583,41 @@ test('a No-Stack obstacle tied for tallest still blocks resting on this spot', (
   const resting = restingCentreY(0.5, 0, { x: 2, y: 1, z: 1 }, [noStackCarton, sameHeightNeighbour], DEFAULT_TRUCK);
   assert.equal(resting, null);
 });
+
+// ── Envelope growth must not make stacking look worse than spreading out ───
+//
+// Regression for the real-world symptom: a trailer that loaded one layer
+// flat, wall to wall, and never used its height. The old envelope term
+// charged the FULL 3-D bounding-box growth, so once the floor footprint
+// already covered a lot of deck, the first box on a new layer got multiplied
+// by that whole footprint area and scored dozens of times worse than the
+// same box dropped further down the open floor — even though stacking is
+// exactly the infill this term is supposed to reward.
+test('stacking neatly on an already-wide floor load no longer costs far more than spreading sideways', () => {
+  // A wide, already-claimed floor footprint — 20 ft down the trailer, the
+  // full 8 ft width, one thin layer tall (mirrors the flat, wall-to-wall load
+  // from the bug report).
+  const floorLoad = [];
+  for (let x = 0.5; x < 20; x += 1) {
+    for (let z = -3.5; z < 4; z += 1) {
+      floorLoad.push(onFloor(x, z, 1, 0.5, 1));
+    }
+  }
+  const stats = loadStats(floorLoad);
+
+  // Option A: stack a 1x1x1 box directly on top of the existing load, fully
+  // within its footprint (pure vertical infill).
+  const stacked = scorePlacement(box(0.5, FLOOR_Y + 0.5 + 0.5, -3.5, 1, 1, 1), { obstacles: floorLoad, stats, mass: 20, explain: false });
+
+  // Option B: the same box dropped on fresh open floor just past the current
+  // load, extending the length instead.
+  const sideways = scorePlacement(onFloor(20.5, -3.5, 1, 1, 1), { obstacles: floorLoad, stats, mass: 20, explain: false });
+
+  assert.equal(stacked.terms.envelope, 0, 'pure vertical infill should add nothing to the footprint');
+  // Stacking should be in the same ballpark as spreading out, not an order of
+  // magnitude worse — the old 3-D formula made it ~50-100x worse here.
+  assert.ok(
+    stacked.score <= sideways.score + WEIGHTS.comHeight + WEIGHTS.tipping,
+    `stacking (${stacked.score.toFixed(1)}) should not be far worse than spreading out (${sideways.score.toFixed(1)})`
+  );
+});
