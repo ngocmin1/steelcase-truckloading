@@ -28,6 +28,8 @@ const ControlPanel = ({
   queueSummary,
   addNextQueuedBox,
   sortQueueForPacking,
+  onAutofill,
+  isAutofilling,
   // US6 Yash
   runStressTest,
   isStressTestRunning,
@@ -197,6 +199,22 @@ const ControlPanel = ({
               title="Reorder the remaining queue: heaviest and bulkiest first, fragile last"
             >
               <Icon name="sort" /> Sort queue by weight
+            </button>
+          )}
+
+          {/* Autofill — keep best-fitting boxes in until the trailer is full */}
+          {onAutofill && (
+            <button
+              type="button"
+              className="btn btn-block btn-success"
+              style={{ marginTop: 6 }}
+              onClick={onAutofill}
+              disabled={isAutofilling || boxes.length >= MAX_BOXES}
+              title="Keep adding boxes at their best-fit spot until the trailer has no more room"
+            >
+              {isAutofilling
+                ? <><span className="spinner" /> Filling truck…</>
+                : <><Icon name="sparkles" /> Autofill truck</>}
             </button>
           )}
         </section>

@@ -72,6 +72,9 @@ export class FitSuggestionSystem {
       truck: this.truck,
       mass: options.mass ?? estimateMass(dimensions),
       fragile: options.fragile ?? false,
+      // US7: honour This-Side-Up so the search never lays the carton on its
+      // side just because that pose scored tighter.
+      thisSideUp: options.restrictions?.thisSideUp ?? false,
       maxResults: count,
       timeBudgetMs: options.timeBudgetMs ?? TIME_BUDGET_MS
     });
@@ -131,6 +134,8 @@ export class FitSuggestionSystem {
         ...makeAABB({ x: p.x, y: p.y, z: p.z }, s),
         mass: entry.physics?.mass ?? estimateMass(s),
         fragile: entry.fragile ?? false,
+        // US7: No-Stack — nothing may be set down resting on top of this one.
+        noStack: entry.restrictions?.noStack ?? false,
         entry
       });
     }

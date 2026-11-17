@@ -131,6 +131,7 @@ const TruckLoadingPrototype = () => {
   // US6 Yash: stress test
   const [stressResult, setStressResult]               = useState(null);
   const [isStressTestRunning, setIsStressTestRunning] = useState(false);
+  const [isAutofilling, setIsAutofilling]             = useState(false);
   // Becky: stop filter (ShipmentSummary)
   const [activeStopFilter, setActiveStopFilter]       = useState(null);
   const [showSessionSummary, setShowSessionSummary]   = useState(false);
@@ -156,15 +157,31 @@ const TruckLoadingPrototype = () => {
   saveToHistoryRef.current = saveToHistory;
 
   // ── Space utilization ──────────────────────────────────────────────────────
-  const usedVolume = boxes.reduce((total, box) => {
-    const pos = box.mesh.position;
+  // Read straight off the live cargo registry instead of re-deriving each
+  // box's volume from a config lookup by id (which silently dropped a box's
+  // contribution — and understated utilization — whenever its type was not
+  // found in `availableBoxes`/`BOX_CONFIGS`, e.g. after switching load
+  // examples or importing a plan). `entry.dimensions` is each box's own
+  // static width/height/depth, so its product is correct regardless of which
+  // orientation the box currently sits in (rotating a box changes which axis
+  // points where, not its volume).
+  //
+  // The in/out check now also tests the box's actual world-aligned footprint
+  // (`entry.size`, which DOES reflect the current rotation) against all three
+  // truck axes — the old check only looked at X/Z, so a box resting above the
+  // trailer's roof height (or, in principle, below the floor) still counted
+  // toward the "used" volume even though it could not legally be delivered.
+  const usedVolume = cargoRegistryRef.current.reduce((total, entry) => {
+    const pos = entry.mesh.position;
+    const half = { x: entry.size.x / 2, y: entry.size.y / 2, z: entry.size.z / 2 };
+    const eps = 1e-3;
     const isInsideTruck =
-      pos.x > -TRUCK_DIMENSIONS.length / 2 && pos.x < TRUCK_DIMENSIONS.length / 2 &&
-      pos.z > -TRUCK_DIMENSIONS.width  / 2 && pos.z < TRUCK_DIMENSIONS.width  / 2;
+      pos.x - half.x > -TRUCK_DIMENSIONS.length / 2 - eps && pos.x + half.x < TRUCK_DIMENSIONS.length / 2 + eps &&
+      pos.z - half.z > -TRUCK_DIMENSIONS.width  / 2 - eps && pos.z + half.z < TRUCK_DIMENSIONS.width  / 2 + eps &&
+      pos.y - half.y > -eps && pos.y + half.y < TRUCK_DIMENSIONS.height + eps;
     if (!isInsideTruck) return total;
-    const config = availableBoxes.find(c => c.id === box.type) || BOX_CONFIGS.find(c => c.id === box.type);
-    if (!config) return total;
-    return total + config.dimensions.width * config.dimensions.height * config.dimensions.depth;
+    const d = entry.dimensions;
+    return total + d.width * d.height * d.depth;
   }, 0);
 
   const volumePercentage = ((usedVolume / TRUCK_VOLUME) * 100).toFixed(2);
@@ -733,6 +750,12 @@ const TruckLoadingPrototype = () => {
       {
         mass: entry.physics?.mass ?? estimateMass(entry.size),
         fragile: entry.fragile ?? false,
+        // US7: this was missing here, so a box added straight into its Best
+        // Fit spot (every "Add box" / queued box, and now Autofill) could get
+        // rested under another carton or flipped onto its side even when it
+        // carried a No-Stack / This-Side-Up restriction — those rules only
+        // ever reached the search via the Suggest/Snap buttons.
+        restrictions: entry.restrictions ?? {},
         exclude: [entry]
       }
     );
@@ -868,6 +891,123 @@ const TruckLoadingPrototype = () => {
       return sorted;
     });
   }, [buildQueueSummary]);
+
+  // ── Autofill: keep best-fitting boxes in until the trailer genuinely has no
+  //    room left ─────────────────────────────────────────────────────────────
+  //
+  // "Add box" / "Add next box" already place a single carton at its AI Best
+  // Fit spot (addBoxAtBestFit), but when nothing fits they still leave that
+  // carton floating at its spawn slot rather than fitting it somewhere else or
+  // giving up cleanly. Autofill needs the opposite: if a carton has nowhere
+  // legal to go right now, pull it back out and try the next one instead of
+  // dumping it in the trailer, and only stop once an entire pass over every
+  // remaining candidate placed nothing.
+  const removeUnplacedEntry = useCallback((entry) => {
+    const physicsWorld = physicsApiRef.current?.world;
+    if (entry.body && physicsWorld) physicsWorld.removeBody(entry.body);
+    if (sceneRef.current && entry.mesh) sceneRef.current.remove(entry.mesh);
+    entry.mesh?.clear();
+    const idx = cargoRegistryRef.current.indexOf(entry);
+    if (idx >= 0) cargoRegistryRef.current.splice(idx, 1);
+    setBoxes(prev => prev.filter(b => b.id !== entry.id));
+    setStats(prev => ({ ...prev, boxCount: Math.max(0, prev.boxCount - 1) }));
+  }, []);
+
+  // Spawn one carton of `boxType` and either settle it into a real Best Fit
+  // spot (returning true) or undo the spawn entirely (returning false) —
+  // Autofill only ever wants a hard yes/no per carton, never a floating one.
+  const tryAutofillOne = useCallback((boxType) => {
+    const entry = addBoxFromType(boxType);
+    if (!entry || !fitSuggestionRef.current) return false;
+
+    const dims = entry.dimensions;
+    const target = fitSuggestionRef.current.findBestFit(
+      { x: dims.width, y: dims.height, z: dims.depth },
+      {
+        mass: entry.physics?.mass ?? estimateMass(entry.size),
+        fragile: entry.fragile ?? false,
+        restrictions: entry.restrictions ?? {},   // US7
+        exclude: [entry]
+      }
+    );
+    if (target &&
+        withinBounds(target.position, target.size, TRUCK_DIMENSIONS) &&
+        checkStabilityOnPlace(target.position, target.size)) {
+      applyPlacement(entry, target);
+      return true;
+    }
+    removeUnplacedEntry(entry);
+    return false;
+  }, [addBoxFromType, applyPlacement, checkStabilityOnPlace, removeUnplacedEntry]);
+
+  // Fills the trailer one carton per animation frame (same pattern as the
+  // stress test below) so the search's ~200 ms-per-carton budget never
+  // freezes the tab. Drains the queue first — skipping, not discarding,
+  // anything that does not currently fit so a later/smaller queued carton
+  // still gets its turn — then keeps topping up from whatever box types still
+  // have quantity left, heaviest/bulkiest first, until a full pass places
+  // nothing at all.
+  const handleAutofill = useCallback(() => {
+    if (isAutofilling) return;
+    setIsAutofilling(true);
+
+    let queue = [...boxQueue];
+    let queueStall = 0;
+
+    const finish = (finalQueue) => {
+      setBoxQueue(finalQueue);
+      setQueueSummary(buildQueueSummary(finalQueue));
+      if (finalQueue.length > 0) setSelectedBoxType(finalQueue[0]);
+      setIsAutofilling(false);
+    };
+
+    // Phase 2: once the queue is drained (or stuck), keep topping up from
+    // whatever box types still have quantity left, heaviest/bulkiest-first
+    // (same ordering "Sort queue by weight" uses), stopping once one full
+    // pass over them places nothing at all.
+    const runFillPass = (candidates, i, anyPlaced) => {
+      if (cargoRegistryRef.current.length >= MAX_BOXES) { finish(queue); return; }
+      if (i >= candidates.length) {
+        if (!anyPlaced) { finish(queue); return; }
+        requestAnimationFrame(fillRemaining);
+        return;
+      }
+      const placed = tryAutofillOne(candidates[i]);
+      requestAnimationFrame(() => runFillPass(candidates, i + 1, anyPlaced || placed));
+    };
+
+    const fillRemaining = () => {
+      if (cargoRegistryRef.current.length >= MAX_BOXES) { finish(queue); return; }
+      const candidates = suggestLoadOrder(
+        availableBoxes.filter(c => {
+          const loaded = cargoRegistryRef.current.filter(e => e.type === c.id).length;
+          return (c.availableQty ?? Infinity) - loaded > 0;
+        })
+      );
+      if (candidates.length === 0) { finish(queue); return; }
+      runFillPass(candidates, 0, false);
+    };
+
+    // Phase 1: drain the queue one carton per animation frame (so the
+    // search's ~200 ms-per-carton budget never freezes the tab), skipping —
+    // not discarding — anything that does not currently fit so a
+    // later/smaller queued carton still gets its turn. Stops once a full lap
+    // over the current queue places nothing, and moves on to phase 2.
+    const drainQueue = () => {
+      if (cargoRegistryRef.current.length >= MAX_BOXES) { finish(queue); return; }
+      if (queue.length === 0 || queueStall >= queue.length) {
+        requestAnimationFrame(fillRemaining);
+        return;
+      }
+      const [next, ...rest] = queue;
+      const placed = tryAutofillOne(next);
+      if (placed) { queue = rest; queueStall = 0; }
+      else { queue = [...rest, next]; queueStall += 1; }
+      requestAnimationFrame(drainQueue);
+    };
+
+    requestAnimationFrame(drainQueue);
+  }, [isAutofilling, boxQueue, availableBoxes, buildQueueSummary, tryAutofillOne]);
 
   // ── US6 Yash: stress test ──────────────────────────────────────────────────
   const runStressTest = useCallback(() => {
@@ -1309,6 +1449,8 @@ const TruckLoadingPrototype = () => {
         queueSummary={queueSummary}
         addNextQueuedBox={addNextQueuedBox}
         sortQueueForPacking={sortQueueForPacking}
+        onAutofill={handleAutofill}
+        isAutofilling={isAutofilling}
         runStressTest={runStressTest}
         isStressTestRunning={isStressTestRunning}
         stressResult={stressResult}

@@ -436,3 +436,23 @@ test('isPlacementValid rejects a carton floating above its resting height', () =
   const size = { x: 2, y: 2, z: 2 };
   assert.equal(isPlacementValid({ x: 0, y: FLOOR_Y + 3, z: 0 }, size, []), false);
 });
+
+// ── US7: This-Side-Up must actually constrain the search, not just be a label
+
+test('a This-Side-Up carton only ever gets upright ("height-up") suggestions', () => {
+  // A carton with three different edge lengths so every orientation really
+  // is distinct (a cube would hide a mis-filtered orientation).
+  const dims = { x: 1, y: 3, z: 2 };
+  const res = findBestFits(dims, [], { mass: 20, thisSideUp: true, maxResults: 10 });
+  assert.ok(res.results.length > 0, 'still finds a placement on an empty trailer');
+  for (const r of res.results) {
+    assert.ok(r.orientation.startsWith('height-up'), `got non-upright orientation: ${r.orientation}`);
+  }
+});
+
+test('without thisSideUp the same carton can still be suggested on its side', () => {
+  const dims = { x: 1, y: 3, z: 2 };
+  const res = findBestFits(dims, [], { mass: 20, maxResults: 10 });
+  const orientations = new Set(res.results.map(r => r.orientation));
+  assert.ok(orientations.size > 1 || [...orientations][0] !== 'height-up', 'other orientations remain reachable');
+});

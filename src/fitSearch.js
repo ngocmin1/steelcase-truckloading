@@ -367,7 +367,11 @@ export function findBestFits(dimensions, obstacles = [], options = {}) {
     fragile = false,
     maxResults = 3,
     timeBudgetMs = TIME_BUDGET_MS,
-    now = defaultClock
+    now = defaultClock,
+    // US7: a carton flagged This-Side-Up may only be set down in whichever
+    // orientation keeps its own height axis vertical — it must never be the
+    // one the search lays on its side just because that pose scored tighter.
+    thisSideUp = false
   } = options;
 
   const empty = {
@@ -395,7 +399,10 @@ export function findBestFits(dimensions, obstacles = [], options = {}) {
     return spent > timeBudgetMs && scored.length > 0;
   };
 
-  const orientations = orientationsFor(dimensions);
+  const allOrientations = orientationsFor(dimensions);
+  const orientations = thisSideUp
+    ? allOrientations.filter((o) => o.vertical === 'height')
+    : allOrientations;
 
   const samples = orientations.map((o) => ({
     orientation: o,

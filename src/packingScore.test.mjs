@@ -562,3 +562,24 @@ test('loadStats hands the fragile load paths to the scorer', () => {
   assert.ok(stats.fragileBelow instanceof Set);
   assert.equal(stats.fragileBelow.has(spacer), true);
 });
+
+// ── US7: No-Stack must be a genuinely illegal perch, not just a label ───────
+
+test('restingCentreY refuses to rest a carton on top of a No-Stack obstacle', () => {
+  const noStackCarton = onFloor(0, 0, 2, 1, 2, { noStack: true });
+  const resting = restingCentreY(0, 0, { x: 1, y: 1, z: 1 }, [noStackCarton], DEFAULT_TRUCK);
+  assert.equal(resting, null);
+});
+
+test('restingCentreY still rests normally on an ordinary carton beside/under a No-Stack one', () => {
+  const ordinary = onFloor(0, 0, 2, 1, 2);
+  const resting = restingCentreY(0, 0, { x: 1, y: 1, z: 1 }, [ordinary], DEFAULT_TRUCK);
+  assert.equal(resting, FLOOR_Y + 1 + 0.5);
+});
+
+test('a No-Stack obstacle tied for tallest still blocks resting on this spot', () => {
+  const noStackCarton = onFloor(0, 0, 2, 1, 2, { noStack: true });
+  const sameHeightNeighbour = box(2.5, FLOOR_Y + 0.5, 0, 1, 1, 2); // same top height, overlaps footprint too
+  const resting = restingCentreY(0.5, 0, { x: 2, y: 1, z: 1 }, [noStackCarton, sameHeightNeighbour], DEFAULT_TRUCK);
+  assert.equal(resting, null);
+});

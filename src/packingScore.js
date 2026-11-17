@@ -255,13 +255,27 @@ export function restingCentreY(x, z, size, obstacles, truck = DEFAULT_TRUCK) {
   const minX = x - hx, maxX = x + hx;
   const minZ = z - hz, maxZ = z + hz;
 
+  // US7: a carton flagged No-Stack is not a legal perch — nothing may rest on
+  // top of it. We still let its footprint set `top` for every OTHER obstacle
+  // under the same column (so the search keeps working out how tall the stack
+  // is), but if the obstacle that actually ends up tallest is a No-Stack one,
+  // this spot is not a valid resting position at all, and the caller (search /
+  // isPlacementValid) must treat it as "no fit here" rather than silently
+  // stacking on it.
   let top = FLOOR_Y;
+  let topIsNoStack = false;
   for (const o of obstacles) {
     if (minX < o.max.x - 1e-5 && maxX > o.min.x + 1e-5 &&
         minZ < o.max.z - 1e-5 && maxZ > o.min.z + 1e-5) {
-      if (o.max.y > top) top = o.max.y;
+      if (o.max.y > top + 1e-6) {
+        top = o.max.y;
+        topIsNoStack = !!o.noStack;
+      } else if (Math.abs(o.max.y - top) <= 1e-6 && o.noStack) {
+        topIsNoStack = true;
+      }
     }
   }
+  if (topIsNoStack) return null;
 
   const centreY = top + size.y / 2;
   return centreY > truck.height - size.y / 2 + 1e-9 ? null : centreY;
